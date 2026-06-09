@@ -62,7 +62,7 @@ re-pull fresh quotes → emit the copy-paste IBKR combo ticket (options) or cons
 ## 1. CONFIG (edit to tune behaviour)
 
 ```yaml
-account_id: "U4598640"              # your IBKR account
+account_id: ""                      # leave blank → uses the account from your CLAUDE.md/memory (or set e.g. "U1234567")
 
 # --- scope ---
 scope_right: "C"                    # long calls
