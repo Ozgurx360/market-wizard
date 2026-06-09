@@ -493,7 +493,7 @@ Specs (each delivered as a copy-paste IBKR combo ticket):
 |---|---|---|---|---|
 | **ETF** | SPY, QQQ, IWM, sector ETFs | 0.80 | 30% | Workhorse; deep-ITM single call + optional PMCC |
 | **Blue chip** | AAPL, MSFT, JNJ, KO | 0.80 | 20% | "Set & maintain" deep-ITM + PMCC |
-| **Growth** | NVDA, TSLA, high-multiple tech | 0.70 | 10% | **Enter only on IV pullback**; avoid pre-earnings; tighter discipline |
+| **Growth** | TSLA, semis/AI, high-multiple tech | 0.70 | 10% | **Enter only on IV pullback**; avoid pre-earnings; tighter discipline |
 | **Speculative** | small/story names | ~0.55 / ATM | 3% | **Debit spread** to cap cost & vega; accept 100% loss |
 
 ---
