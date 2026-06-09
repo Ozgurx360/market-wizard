@@ -62,7 +62,7 @@ re-pull fresh quotes → emit the copy-paste IBKR combo ticket (options) or cons
 ## 1. CONFIG (edit to tune behaviour)
 
 ```yaml
-account_id: ""                      # leave blank → uses the account from your CLAUDE.md/memory (or set e.g. "U1234567")
+account_id: ""                      # the user's IBKR account — resolve from their CLAUDE.md/memory; if none is set there, ASK the user before any account call (never guess)
 
 # --- scope ---
 scope_right: "C"                    # long calls
@@ -641,7 +641,7 @@ intraday call. The skill therefore:
 
 ## 13. FIRST-RUN CALIBRATION (once)
 
-1. Confirm `account_id`, which positions are **in-scope LEAPS**, and which long+short pairs are
+1. Resolve `account_id` from the user's CLAUDE.md/memory (if not configured there, **ASK** the user — never assume). Then confirm which positions are **in-scope LEAPS**, and which long+short pairs are
    **debit spreads** (give the long/short legs) vs **PMCC** — so each routes to the right engine.
 2. Probe `get_price_snapshot` on one option to learn **which greeks/IV fields return**; set the
    delta/IV fallback path.
