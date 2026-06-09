@@ -522,7 +522,7 @@ If VIX/earnings/dividend data isn't retrievable, flag the gap rather than assumi
 
 **B. Per-position economics** (detail block per position — surfaces the value split):
 ```
-NVDA  800 C  2026-01-16   (x2)
+XYZ   800 C  2027-12-17   (x2)
   Underlying 950.00 | moneyness 1.19 | DTE 540 | IV 45% (EST if no live greeks)
   Mark 210.00  =  Intrinsic 150.00  +  Extrinsic 60.00
   Extrinsic cost 7.4%/yr | Delta 0.82 | Gamma 0.001 | Theta -0.18/day | Vega 1.1
@@ -533,12 +533,12 @@ NVDA  800 C  2026-01-16   (x2)
 
 **B2. Debit-spread economics** (per spread held — managed as one unit):
 ```
-NVDA  900/1100 C  2027-01-15   (x1 vertical)
+XYZ   900/1100 C  2027-01-15   (x1 vertical)
   Underlying 1000.00 | width 200 | DTE 230
   Spread value 120.00 ($12,000)  |  net debit paid 80.00 ($8,000)  |  P&L +50%
   % of max captured 60%  (max value = width 200) | max profit 120 | max loss 80 | breakeven 980
   net delta 0.34 | net theta -0.01/day | net vega 0.3
-  -> HOLD  (pct_of_max 60% < 70% take; DTE clear of close_dte)
+  -> CLOSE SPREAD  (harvest: pct_of_max 60% >= 60% take)
 ```
 
 **C. Proposed orders / copy-paste IBKR tickets — PENDING YOUR APPROVAL** (numbered): legs, exact
