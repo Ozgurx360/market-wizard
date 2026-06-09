@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "finance-tools",
+  "owner": { "name": "Ozgur" },
+  "plugins": [
+    {
+      "name": "finance",
+      "source": "./plugins/finance",
+      "displayName": "Finance Tools",
+      "description": "Trading-strategy + options skills for an Interactive Brokers workflow. Skills: leaps (CSP/CC planned).",
+      "author": { "name": "Ozgur" },
+      "repository": "https://github.com/Ozgurx360/finance",
+      "license": "MIT"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "finance",
+  "displayName": "Finance Tools",
+  "description": "Trading-strategy + options skills. leaps = full-lifecycle long-call LEAPS; CSP/CC planned.",
+  "author": { "name": "Ozgur" },
+  "homepage": "https://github.com/Ozgurx360/finance",
+  "repository": "https://github.com/Ozgurx360/finance",
+  "license": "MIT",
+  "keywords": ["finance", "trading", "options", "leaps", "ibkr", "portfolio"]
+}
