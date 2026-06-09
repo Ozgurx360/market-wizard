@@ -71,8 +71,8 @@ exclude_symbols: []
 short_legs_are_pmcc: true
 
 # --- delta / moneyness ---
-delta_target_min: 0.70
-delta_target_max: 0.85
+delta_target_min: 0.70              # acceptable delta band [min..max] for new/rolled long strikes —
+delta_target_max: 0.85              # strike selection & ROLL-UP keep the strike's delta inside this band
 delta_sweet_spot: 0.80
 deep_itm_delta: 0.75
 delta_rollout_trigger: 0.60
@@ -118,7 +118,7 @@ asset_classes:
   etf:         { delta_target: 0.80, max_notional_pct: 30, structure: "single_call" }
   blue_chip:   { delta_target: 0.80, max_notional_pct: 20, structure: "single_call" }
   growth:      { delta_target: 0.70, max_notional_pct: 10, structure: "single_call (IV-pullback only)" }
-  speculative: { delta_target: 0.55, max_notional_pct: 3,  structure: "debit_spread" }
+  speculative: { delta_target: 0.55, max_notional_pct: 3,  structure: "debit_spread" }   # delta_target informational only here — debit_spread legs use spread_long_leg_delta / spread_short_leg_delta
 known_etfs: ["SPY","QQQ","IWM","DIA","SCHD","VTI","XLK","XLF","XLE","XLV"]
 avoid_entry_days_before_earnings: 7
 
@@ -236,7 +236,7 @@ If intent is unclear, ask which the user wants. Entry and review can be combined
 ## 4. RUNBOOKS
 
 **Review / single-position runbook**
-0. **Load & reconcile memory.** Read `memory.md` + `CLAUDE.md` (conid↔ticker map, prior thesis notes, open
+0. **Load & reconcile memory (if present).** Read `memory.md` + `CLAUDE.md` if they exist (conid↔ticker map, prior thesis notes, open
    TODOs). After pulling live data, **surface any contradiction** between memory, live positions, and
    statements — a conid that no longer matches, a closed position still listed, a field the notes call
    "unavailable" that the API now returns (e.g. positions now include strike/expiry/right) — instead of
@@ -361,7 +361,7 @@ IF pnl_pct >= trim_2_gain_pct: -> TRIM (larger)
 ELIF pnl_pct >= trim_1_gain_pct: -> TRIM (partial)
 
 # 6. TIME-DEFENSE ROLL OUT
-IF delta >= deep_itm_delta AND DTE <= dte_roll_window_high: -> ROLL-OUT
+IF delta >= deep_itm_delta AND DTE <= dte_roll_window_high: -> ROLL-OUT (roll within the dte_roll_window_low..dte_roll_window_high = 90-120d window)
 IF delta <  deep_itm_delta AND DTE <= dte_early_roll_if_drifted: -> ROLL-OUT (EARLY)  # drifted ATM
 
 # 7. ROLL DOWN (cautious; intact-thesis loser only)
@@ -378,7 +378,7 @@ IF pnl_pct < 0 AND (breakeven_above_52w_high OR breakeven_required_move_pct > br
     # ALSO render §10-G cost-of-waiting (what holding costs vs closing) and ask conviction before concluding.
 
 # 8. WATCH (approaching a trigger)
-IF DTE <= (relevant_roll_window + dte_watch_lead)
+IF DTE <= (relevant_roll_window + dte_watch_lead)   # relevant_roll_window = dte_roll_window_high if delta >= deep_itm_delta, else dte_early_roll_if_drifted
    OR delta within 0.05 of a trigger
    OR pnl_pct within 10pts of a stop/trim level: -> WATCH
 
@@ -443,7 +443,7 @@ or a full CLOSE is single-leg and routes as a simple ticket.)
 
 - **ROLL-OUT:** new expiry `new_leg_dte_min..max`; strike with delta ≈ `delta_sweet_spot`.
   Report **net debit**, new delta, new `extrinsic_pct_yr`, new intrinsic/extrinsic.
-- **ROLL-UP:** higher strike, same/longer expiry, delta back to band; should free capital
+- **ROLL-UP:** higher strike, same/longer expiry, delta back to band [delta_target_min..delta_target_max]; should free capital
   (net credit / smaller cost). Report cash freed + new delta.
 - **ROLL-DOWN:** lower strike to restore delta; **net debit that raises risk** — state added
   capital + new notional; require approval with that flagged.

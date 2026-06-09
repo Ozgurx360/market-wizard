@@ -1,15 +1,15 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
-  "name": "finance-tools",
+  "name": "market-wizard",
   "owner": { "name": "Ozgur" },
   "plugins": [
     {
-      "name": "finance",
-      "source": "./plugins/finance",
-      "displayName": "Finance Tools",
+      "name": "market-wizard",
+      "source": "./plugins/market-wizard",
+      "displayName": "Market Wizard",
       "description": "Trading-strategy + options skills for an Interactive Brokers workflow. Skills: leaps (CSP/CC planned).",
       "author": { "name": "Ozgur" },
-      "repository": "https://github.com/Ozgurx360/finance",
+      "repository": "https://github.com/Ozgurx360/market-wizard",
       "license": "MIT"
     }
   ]
