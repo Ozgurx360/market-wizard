@@ -5,7 +5,8 @@ A **decision aid** — not an autotrader, not financial advice.
 
 ## Skills
 - **`market-wizard:leaps`** — full-lifecycle long-call LEAPS (live now)
-- _planned:_ `market-wizard:csp` (cash-secured puts) · `market-wizard:cc` (covered calls)
+- **`market-wizard:covered-call`** — full-lifecycle covered calls on shares you own (live now)
+- _planned:_ `market-wizard:csp` (cash-secured puts)
 
 ---
 
@@ -59,6 +60,52 @@ skill, so you tune the whole strategy to your own risk tolerance without touchin
 
 ---
 
+## The strategy — `covered-call`
+
+Sells calls against shares you already own, running the **full lifecycle of a short-call overlay** — which
+call to **write**, and how to **manage** it through to expiry, roll, or assignment. Shares-only; the
+LEAP-backed "poor-man's covered call" lives in `leaps`.
+
+**Core idea.** A covered call turns shares you're holding into an income stream — you collect premium in
+exchange for capping upside at the strike. The whole skill is **intent-driven**: before it suggests anything
+it asks *why* you're writing, because that changes the strike, the roll rules, and the guardrails.
+
+### Intent — the master switch
+- **Income-on-keepers** — keep the shares, harvest premium; far-OTM strikes, defend hard against assignment.
+- **Exit-oriented** — happy to be called away at a good price; closer strikes, let assignment happen.
+- **Repair-failing** — a down position you're grinding back: writes are **adjusted-basis-aware**, any strike
+  below your true (premium-reduced) basis is flagged as a *managed exit, not repair*, and the **rebound risk**
+  is modeled before you cap a recovery.
+
+### Every write shows the numbers that matter
+- **Projected annualized return — both ways:** *return-if-flat* (the call expires, you keep the premium) and
+  *return-if-called* (assigned — total including the move to the strike).
+- **Cumulative premium collected to date** per ticker and the resulting **adjusted cost basis**
+  (raw basis − net call premium), sourced from your IBKR statement history (which carries the per-trade
+  call/put + strike the live feed doesn't).
+- Downside cushion, upside cap, delta, and ex-dividend / earnings flags.
+
+### Lifecycle management (existing short calls)
+One verdict per position, classified top-down:
+- **HOLD** · **BUY-TO-CLOSE** (profit-take ≈ 50% of the credit) · **ROLL-UP / ROLL-OUT / ROLL-UP&OUT** when the
+  strike is tested · **LET-ASSIGN** (exit intent, or repair at/above basis) · **DEFEND** (in-the-money into
+  ex-dividend or earnings → early-assignment risk).
+
+### What it deliberately does *not* do
+- **Never writes naked** — verifies you hold ≥ 100 shares per contract.
+- **Never quietly turns "repair" into a loss** — any strike below your adjusted basis is flagged as a managed
+  exit with the dollar loss-if-assigned spelled out, requiring your acknowledgment.
+- **Never infers your thesis** — a broken thesis is a human input; it recommends closing rather than writing
+  into a falling knife.
+- **Read-only by default** — option writes/rolls are **copy-paste IBKR tickets you transmit yourself**; nothing
+  is placed without your per-order approval. A full-portfolio review fans out **read-only** and hands you a
+  ranked action board.
+
+Like `leaps`, every threshold — delta bands per intent, profit-take %, DTE window, roll triggers — lives in a
+**CONFIG block** you can tune.
+
+---
+
 ## Install
 ```
 /plugin marketplace add Ozgurx360/market-wizard
@@ -66,6 +113,9 @@ skill, so you tune the whole strategy to your own risk tolerance without touchin
 ```
 Then `/help` → `/market-wizard:leaps`. Trigger it naturally — *"review my LEAPS,"* *"is this a good entry on
 TICKER,"* *"should I roll X,"* *"build a debit spread on Y,"* *"trim/close this position."*
+
+For `covered-call` — *"review my covered calls,"* *"write a covered call on TICKER,"* *"how much premium have I
+collected on TICKER,"* *"should I roll my short call,"* *"reduce my cost basis by selling calls."*
 
 ## Update (after a push)
 ```
@@ -75,7 +125,7 @@ No version pin — every push is the latest.
 
 ## Add a skill later
 Drop `plugins/market-wizard/skills/<name>/SKILL.md`, commit, push, `/reload-plugins` → auto-loads as
-`market-wizard:<name>`. (CSP and CC will follow the same lifecycle-and-config philosophy as `leaps`.)
+`market-wizard:<name>`. (CSP will follow the same lifecycle-and-config philosophy as `leaps` and `covered-call`.)
 
 ## Layout
 ```
@@ -83,6 +133,7 @@ Drop `plugins/market-wizard/skills/<name>/SKILL.md`, commit, push, `/reload-plug
 plugins/market-wizard/
   .claude-plugin/plugin.json             plugin manifest
   skills/leaps/SKILL.md                  the LEAPS skill
+  skills/covered-call/                   covered-call skill (SKILL.md + portfolio-scan workflow)
 ```
 
 ## Disclaimer
