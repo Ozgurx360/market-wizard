@@ -36,6 +36,9 @@ not hand off to it until it actually ships.)
 - **Your context comes from your own files.** Account number, decisions-log path, and any per-ticker basis are
   read from the installer's `CLAUDE.md` / `memory.md`. If a needed value is missing, **ask** — never hard-code.
 - **Stops and asks** whenever data is missing, stale, or contradictory. It flags; it does not guess.
+- **One ticker at a time, by default.** Each ticker is its own interactive read. **Batch only on an explicit
+  request** — "all holdings", "whole portfolio", or a named list of tickers — then loop the same chart per
+  name and close with a one-line-per-name summary table, skipping the teaching pauses. Never sweep the book unprompted.
 
 ---
 
@@ -62,44 +65,45 @@ CHART_WINDOW       = 90       # sessions shown on the daily chart
 
 # Output
 DECISIONS_LOG      = "<from CLAUDE.md, else ask>"   # e.g. a Trading-Decisions.md in the working folder
-ASSETS_DIR         = "./assets"                      # date-stamped charts land here (.png + .svg + .html)
+ASSETS_DIR         = "./assets"                      # engine default; skill points --outdir at assets/ beside DECISIONS_LOG. Outputs: .png .svg .html .widget.html
 DATA_AS_OF         = "prior session close"           # ignore weekend/stale 'last' snapshots
 ```
 
-> **Override note (honest):** these values document `deepdive.py`'s built-in constants. Two are
-> overridable at runtime via CLI flags — `CHART_WINDOW` → `--window`, `IV_RANK_SELL_ZONE` →
-> `--iv-sell-zone` — plus `--strike <price>` (optional, no constant) which draws a dashed line on the
-> chart's price panel at that strike. The rest are fixed in the engine; to change them, edit the
-> constants at the top of `deepdive.py`. Editing this block alone does nothing.
+> **Override note (honest):** these values document `deepdive.py`'s built-in constants. Runtime CLI flags:
+> `--window` (→ CHART_WINDOW), `--iv-sell-zone` (→ IV_RANK_SELL_ZONE), `--strike <p> [<p> …]` (one or more
+> dashed price-panel lines — no constant), and `--logscale` (log-scale the price panel; use it for parabolic
+> names). IV fields passed as 0–1 fractions are **auto-scaled to percent with a warning** (so the sell-zone
+> gate can't silently fail). The rest are fixed in the engine; to change them, edit the constants at the top
+> of `deepdive.py`. Editing this block alone does nothing.
 
 ---
 
 ## WORKFLOW
 
 1. **Resolve** the ticker and (if it's a holding) the position from the IBKR connector. Read the decisions-log
-   path + any saved basis from the user's `CLAUDE.md` / `memory.md`; ask if absent.
+   path, its `assets/` folder (ASSETS_DIR = an `assets/` beside the log), and any saved basis from the user's
+   `CLAUDE.md` / `memory.md`; ask if absent. Pass that `assets/` as `--outdir` so charts land beside the log.
 2. **Pull data** (IBKR MCP): daily history (~1 yr), weekly history (~2 yr), and an IV snapshot
    (current IV, the 13/26/52-wk **IV-percentile/rank**, realized vol). **Use the prior-session close** — discard a
    stale weekend/intraday "last" if it disagrees with the latest **completed** history bar (set `asof` to that bar).
-   - **The connector returns IV-percentile and vols as FRACTIONS (0–1) — multiply by 100** before passing
-     `rank13/rank26/rank52`, `annual_pct`, `realized_pct` (e.g. `implied-volatility-percentile.high_13w` = 0.38
-     → `rank13: 38`). Skip this and the sell-zone gate (`rank13 >= IV_RANK_SELL_ZONE`) is silently always-false.
+   - **The connector returns IV-percentile and vols as FRACTIONS (0–1).** The engine now auto-scales 0–1 values
+     to percent (e.g. `high_13w` 0.38 → `rank13: 38`) and **warns** when it does, so the sell-zone gate can't
+     silently always-fail. Still prefer to pass percent and stay consistent across the fields.
 3. **Compute + chart** — write the pulled series to a temp JSON and run the engine:
-   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/chart-read/scripts/deepdive.py" --input <tmp>.json --outdir <ASSETS_DIR> --window <CHART_WINDOW> [--strike <price>]`
-   It returns the stack as JSON and writes `<asof>_<TICKER>_daily.(png|svg|html)` (price+SMA+Bollinger / RSI / MACD). Two views of the same data:
+   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/chart-read/scripts/deepdive.py" --input <tmp>.json --outdir <ASSETS_DIR> --window <CHART_WINDOW> [--strike <p> [<p> …]] [--logscale]`
+   It returns the stack as JSON and writes `<asof>_<TICKER>_daily.(png|svg|html|widget.html)` (price + SMA(200/50) + Bollinger + last-price label + strikes / RSI / MACD):
    - **PNG/SVG** — the static, date-stamped image to **embed in the decisions log / markdown** (the OUTPUT template links the `.png`).
-   - **HTML** — a self-contained **interactive** chart (Chart.js via CDN, index-hover tooltips, dark-mode aware) to **open in a browser** for reading together — e.g. render it inline in Cowork. The PNG is for the log; the HTML is for live reading.
-   - `--strike <price>` (optional) draws a dashed line on the price panel — handy when eyeing a specific call/put strike.
+   - **HTML** — a self-contained **interactive** chart (Chart.js, index-hover tooltips, dark-mode aware) to **open in a browser**.
+   - **`.widget.html`** — a `show_widget`-ready fragment of the *same* chart, for inline rendering in chat (step 4).
+   - **`--strike`** — pass the strikes of the user's **actual short options on this ticker** (read them from the IBKR positions) so the chart shows where the real obligations sit. One or many. Prefer the **near-the-money** strikes that matter to the decision — a deep-OTM strike stretches the y-axis and squishes the price action.
+   - **`--logscale`** — use for parabolic names (a ~3×+ range) so the early action isn't crushed flat.
    On bad/missing data it prints a one-line `{"error": ...}` and exits non-zero — read it and STOP, don't guess.
    (First run in a fresh sandbox, if the libs are missing:
    `python3 -m pip install "numpy>=1.23" "pandas>=1.5" "matplotlib>=3.6"`.)
 4. **Show it inline** — don't make the user open a file. Render the chart in the chat so they see it
-   immediately (works in both Cowork and Claude Code): take the `const D = { … }` JSON the engine embedded in
-   the generated `.html`, substitute it for `__DATA__` in
-   `${CLAUDE_PLUGIN_ROOT}/skills/chart-read/templates/inline_chart.html`, and pass the result to the
-   `mcp__visualize__show_widget` tool. It's the same 3-panel view as the PNG (Chart.js from the cdnjs
-   allow-list). Put the ticker + as-of date in your chat text, not inside the widget. (If you ever change the
-   chart, keep this template's config in sync with `deepdive.py`.)
+   immediately (Cowork and Claude Code): pass the **contents of the engine's `<asof>_<TICKER>_daily.widget.html`**
+   to the `mcp__visualize__show_widget` tool — it's a ready-made fragment of the same 3-panel chart (Chart.js
+   from the cdnjs allow-list, dark-mode aware). Put the ticker + as-of date in your chat text, not in the widget.
 5. **Read it** (see THE READ): weekly bias → daily trigger → structure → divergence candidate → IV-rank.
 6. **Decide** — one verdict with trigger levels expressed as **underlying prices**. If options are in play, show
    **premium-adjusted basis** and hand the action to `leaps` / `covered-call`.
@@ -151,7 +155,7 @@ the raw/accounting basis, arithmetic visible: assignment = strike − put premiu
 
 ### Decision log
 #### <YYYY-MM-DD> — <VERDICT>
-![<TICKER> daily <date>](assets/<asof>_<TICKER>_daily.png)
+![<TICKER> daily <date>](assets/<asof>_<TICKER>_daily.png) · [interactive chart](assets/<asof>_<TICKER>_daily.html)
 - Weekly (bias): <price> vs 40-wk <x> -> ABOVE/BELOW; wRSI <x>; wMACD <x> (bull/bear)
 - Daily (trigger): vs 200-SMA <x> -> ABOVE/BELOW; RSI <x>; MACD <l/s/h>; Bollinger <lo/mid/up>, %B <x>
 - Structure: <recent swing highs/lows>
@@ -176,6 +180,14 @@ wherever `DECISIONS_LOG` lives (point `--outdir` at an `assets/` folder beside t
   failure modes.
 - **Never hard-codes account or personal data** — everything personal is read from the installer's own files, or asked.
 - **Never trusts a stale quote** — it reads off the prior-session close and flags weekend/frozen "last" values.
+
+---
+
+## Backlog (deferred)
+
+- **Anchored VWAP** overlay from a chosen pivot (the ATH or a swing low) — not yet built; the indicator stack
+  is otherwise settled. When prioritized, add it in `deepdive.py` and it flows to the PNG and the inline widget
+  automatically (one chart config now drives both).
 
 ---
 
