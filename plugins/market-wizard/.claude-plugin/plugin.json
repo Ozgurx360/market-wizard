@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "market-wizard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "displayName": "Market Wizard",
-  "description": "Trading-strategy + options skills. leaps = full-lifecycle long-call LEAPS; covered-call = full-lifecycle covered calls on owned shares; chart-read = technical-analysis read + date-stamped chart that feeds the options skills (intent-driven, IBKR).",
+  "description": "v0.3.1 — Trading-strategy + options skills. leaps = full-lifecycle long-call LEAPS; covered-call = full-lifecycle covered calls on owned shares; chart-read = technical-analysis read + date-stamped chart that feeds the options skills (intent-driven, IBKR).",
   "author": { "name": "Ozgur" },
   "homepage": "https://github.com/Ozgurx360/market-wizard",
   "repository": "https://github.com/Ozgurx360/market-wizard",

@@ -1,17 +1,16 @@
 ---
 name: chart-read
-description: >-
+description: >
   Technical-analysis read on any holding or watch-list ticker, scoped to the market-wizard options
   workflow. Pulls IBKR price history, computes the weekly-bias / daily-trigger indicator stack (RSI,
   MACD, 200/50-SMA, Bollinger), flags divergence candidates, reads IV-RANK (relative, not absolute IV),
   renders a date-stamped Price/RSI/MACD chart, and writes a dated decision entry with trigger levels.
   Read-only; it produces the chart-and-regime read that FEEDS the options skills (leaps / covered-call)
-  rather than duplicating them; it never infers your thesis. Trigger on: "chart-read TICKER", "run a
-  chart-read on TICKER", "chart-read review of my holdings", "technical / regime read on TICKER before I
-  write a call or LEAP", "is TICKER at a support/resistance level for an options entry",
-  "confluence/divergence read on TICKER before I sell premium", "RSI/MACD/Bollinger read on TICKER for an
-  entry", "is TICKER's IV-rank rich enough to sell premium", "where's my entry trigger / invalidation on
-  TICKER", "log a chart-read decision on TICKER", "weekly-bias and daily-trigger read on TICKER".
+  rather than duplicating them; it never infers your thesis. Trigger on: "chart-read TICKER",
+  "chart-read review of my holdings", "technical / regime read on TICKER before I write a call or LEAP",
+  "is TICKER at a support/resistance level for an options entry", "confluence/divergence read on TICKER
+  before I sell premium", "is TICKER's IV-rank rich enough to sell premium", "where's my entry trigger /
+  invalidation on TICKER", "log a chart-read decision on TICKER".
 ---
 
 # Chart-Read — technical read, chart, and decision log

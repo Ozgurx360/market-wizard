@@ -6,10 +6,10 @@
   "plugins": [
     {
       "name": "market-wizard",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "source": "./plugins/market-wizard",
       "displayName": "Market Wizard",
-      "description": "Trading-strategy + options skills for an Interactive Brokers workflow. Skills: leaps (long-call LEAPS), covered-call, and chart-read (TA read + interactive chart that feeds the options skills).",
+      "description": "v0.3.1 — Trading-strategy + options skills for an Interactive Brokers workflow. Skills: leaps (long-call LEAPS), covered-call, and chart-read (TA read + interactive chart that feeds the options skills).",
       "author": { "name": "Ozgur" },
       "repository": "https://github.com/Ozgurx360/market-wizard",
       "license": "MIT"
