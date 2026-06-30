@@ -1,0 +1,57 @@
+<style>
+.cr-lg{display:flex;flex-wrap:wrap;gap:14px;margin:10px 0 4px;font-size:12px;color:var(--text-secondary)}
+.cr-lg span{display:inline-flex;align-items:center;gap:5px}
+.cr-lg i{width:12px;height:3px;border-radius:1px;display:inline-block}
+.cr-lg b{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Daily technical chart: price with 200-day and 50-day moving averages, a Bollinger band and any marked strike line; RSI(14); and MACD(12,26,9).</h2>
+
+<div class="cr-lg"><span><i style="background:#2a78d6"></i>Close</span><span><i style="background:#c98500"></i>200-SMA</span><span><i style="background:#898781"></i>50-SMA</span><span><b style="background:rgba(42,120,214,.18)"></b>Bollinger(20,2)</span><span><i style="background:#e34948"></i>Strike</span></div>
+<div style="position:relative;width:100%;height:300px"><canvas id="crPrice" role="img" aria-label="Daily close with 200-day and 50-day moving averages, a Bollinger band, and any marked strike line">Daily price with moving averages, Bollinger band, and an optional strike line.</canvas></div>
+
+<div class="cr-lg" style="margin-top:14px"><span><i style="background:#4a3aa7"></i>RSI(14)</span><span style="color:var(--text-muted)">guides 30 / 50 / 70</span></div>
+<div style="position:relative;width:100%;height:128px"><canvas id="crRsi" role="img" aria-label="RSI(14) with 30, 50 and 70 guide levels">RSI(14) with 30, 50 and 70 guides.</canvas></div>
+
+<div class="cr-lg" style="margin-top:14px"><span><b style="background:#199e70"></b><b style="background:#e34948;margin-left:-3px"></b> Histogram</span><span><i style="background:#2a78d6"></i>MACD</span><span><i style="background:#c98500"></i>Signal</span></div>
+<div style="position:relative;width:100%;height:150px"><canvas id="crMacd" role="img" aria-label="MACD(12,26,9) histogram with MACD and signal lines">MACD(12,26,9) histogram with MACD and signal lines.</canvas></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const D = __DATA__;
+(function(){
+  const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const grid = dark ? '#2c2c2a' : '#e1e0d9';
+  const tick = dark ? '#c3c2b7' : '#52514e';
+  const rsiC = dark ? '#9085e9' : '#4a3aa7';
+  Chart.defaults.color = tick; Chart.defaults.font.size = 11;
+  const YW = 52, fixY = { afterFit(s){ s.width = YW; } };
+  const tip = { mode:'index', intersect:false, callbacks:{ label:(c)=> c.dataset.label + ': ' + (c.parsed.y==null ? '-' : Number(c.parsed.y).toFixed(2)) } };
+  const xTop = { grid:{color:grid}, ticks:{display:false} };
+  const xBot = { grid:{color:grid}, ticks:{autoSkip:true, maxTicksLimit:8, maxRotation:0} };
+  const flat = (v) => D.labels.map(()=>v);
+  const li = D.close.length - 1;
+  const ptR = D.close.map((_,i)=> i===li ? 4.5 : 0);
+  const ptC = D.close.map((_,i)=> i===li ? '#2a78d6' : 'rgba(0,0,0,0)');
+  const pds = [
+    { label:'Boll up', data:D.bup, borderColor:'rgba(42,120,214,.35)', borderWidth:0.8, pointRadius:0, fill:'+1', backgroundColor:'rgba(42,120,214,.10)' },
+    { label:'Boll lo', data:D.blo, borderColor:'rgba(42,120,214,.35)', borderWidth:0.8, pointRadius:0, fill:false },
+    { label:'Close', data:D.close, borderColor:'#2a78d6', borderWidth:1.9, pointRadius:ptR, pointBackgroundColor:ptC, pointBorderColor:ptC, tension:0 },
+    { label:'200-SMA', data:D.sma200, borderColor:'#c98500', borderWidth:1.3, borderDash:[6,3], pointRadius:0 },
+    { label:'50-SMA', data:D.sma50, borderColor:'#898781', borderWidth:1.1, borderDash:[2,2], pointRadius:0 }
+  ];
+  if (D.hlLabel) { pds.push({ label:D.hlLabel, data:flat(D.hl), borderColor:'#e34948', borderWidth:1.3, borderDash:[7,4], pointRadius:0, fill:false }); }
+  new Chart(document.getElementById('crPrice'), { type:'line', data:{ labels:D.labels, datasets:pds }, options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:'index',intersect:false}, plugins:{ legend:{display:false}, tooltip:tip }, scales:{ x:xTop, y:Object.assign({grid:{color:grid}}, fixY) } } });
+  new Chart(document.getElementById('crRsi'), { type:'line', data:{ labels:D.labels, datasets:[
+    { label:'70', data:flat(70), borderColor:'rgba(227,73,72,.5)', borderWidth:0.8, borderDash:[5,4], pointRadius:0 },
+    { label:'50', data:flat(50), borderColor:'rgba(137,135,129,.6)', borderWidth:0.7, borderDash:[3,3], pointRadius:0 },
+    { label:'30', data:flat(30), borderColor:'rgba(99,153,34,.6)', borderWidth:0.8, borderDash:[5,4], pointRadius:0 },
+    { label:'RSI(14)', data:D.rsi, borderColor:rsiC, borderWidth:1.6, pointRadius:0 }
+  ]}, options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:'index',intersect:false}, plugins:{ legend:{display:false}, tooltip:Object.assign({}, tip, {filter:(i)=>i.dataset.label==='RSI(14)'}) }, scales:{ x:xTop, y:Object.assign({min:0,max:100,ticks:{stepSize:20},grid:{color:grid}}, fixY) } } });
+  const hc = D.hist.map((v)=> v==null ? 'rgba(0,0,0,0)' : (v>=0 ? 'rgba(25,158,112,.65)' : 'rgba(227,73,72,.65)'));
+  new Chart(document.getElementById('crMacd'), { type:'bar', data:{ labels:D.labels, datasets:[
+    { type:'bar', label:'Hist', data:D.hist, backgroundColor:hc, borderWidth:0, categoryPercentage:1, barPercentage:1 },
+    { type:'line', label:'MACD', data:D.macd, borderColor:'#2a78d6', borderWidth:1.3, pointRadius:0 },
+    { type:'line', label:'Signal', data:D.signal, borderColor:'#c98500', borderWidth:1, borderDash:[5,3], pointRadius:0 }
+  ]}, options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:'index',intersect:false}, plugins:{ legend:{display:false}, tooltip:tip }, scales:{ x:xBot, y:Object.assign({grid:{color:grid}}, fixY) } } });
+})();
+</script>

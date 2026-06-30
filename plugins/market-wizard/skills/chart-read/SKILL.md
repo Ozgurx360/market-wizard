@@ -93,10 +93,17 @@ DATA_AS_OF         = "prior session close"           # ignore weekend/stale 'las
    On bad/missing data it prints a one-line `{"error": ...}` and exits non-zero — read it and STOP, don't guess.
    (First run in a fresh sandbox, if the libs are missing:
    `python3 -m pip install "numpy>=1.23" "pandas>=1.5" "matplotlib>=3.6"`.)
-4. **Read it** (see THE READ): weekly bias → daily trigger → structure → divergence candidate → IV-rank.
-5. **Decide** — one verdict with trigger levels expressed as **underlying prices**. If options are in play, show
+4. **Show it inline** — don't make the user open a file. Render the chart in the chat so they see it
+   immediately (works in both Cowork and Claude Code): take the `const D = { … }` JSON the engine embedded in
+   the generated `.html`, substitute it for `__DATA__` in
+   `${CLAUDE_PLUGIN_ROOT}/skills/chart-read/templates/inline_chart.html`, and pass the result to the
+   `mcp__visualize__show_widget` tool. It's the same 3-panel view as the PNG (Chart.js from the cdnjs
+   allow-list). Put the ticker + as-of date in your chat text, not inside the widget. (If you ever change the
+   chart, keep this template's config in sync with `deepdive.py`.)
+5. **Read it** (see THE READ): weekly bias → daily trigger → structure → divergence candidate → IV-rank.
+6. **Decide** — one verdict with trigger levels expressed as **underlying prices**. If options are in play, show
    **premium-adjusted basis** and hand the action to `leaps` / `covered-call`.
-6. **Log it** — append a dated entry to `DECISIONS_LOG` using the OUTPUT template, embedding the chart.
+7. **Log it** — append a dated entry to `DECISIONS_LOG` using the OUTPUT template, embedding the chart.
 
 ---
 
