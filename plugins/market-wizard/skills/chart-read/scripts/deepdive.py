@@ -4,12 +4,13 @@
 Generic and stateless. NO personal data lives here. Reads an OHLC(+IV) JSON on
 --input, computes the weekly-bias / daily-trigger indicator stack, flags
 divergence candidates, and renders a date-stamped 3-panel chart
-(price + 200/50-SMA + Bollinger | RSI | MACD) as a static PNG/SVG, a
-self-contained interactive Chart.js HTML, and a show_widget-ready HTML fragment.
-Prints a JSON summary to stdout.
+(price + 200/50-SMA + Bollinger | RSI | MACD). DEFAULT (inline) mode writes only
+the show_widget HTML fragment (.widget.html) and never imports matplotlib; pass
+--log to ALSO render the static PNG/SVG + standalone interactive HTML (for a
+logged decision entry). Prints a JSON summary to stdout.
 
   python3 deepdive.py --input data.json --outdir ./assets [--window 90] \
-                      [--iv-sell-zone 60] [--strike 95 80 ...] [--logscale]
+                      [--iv-sell-zone 60] [--strike 95 80 ...] [--logscale] [--log]
 
 Input JSON (price series ordered oldest -> newest):
 {
@@ -230,7 +231,7 @@ def _norm_iv(iv, warnings):
                         "auto-scaled x100 (IV-rank/percentile are 0-100; vols are percent). Pass percent to silence.")
 
 
-def run(D, outdir, window, iv_sell_zone, strikes=None, logscale=False):
+def run(D, outdir, window, iv_sell_zone, strikes=None, logscale=False, log=False):
     strikes = [float(s) for s in (strikes or []) if s is not None]
     tkr_raw = str(D.get("ticker", "TICKER"))
     safe_tkr = _safe_ticker(tkr_raw)
@@ -315,12 +316,18 @@ def run(D, outdir, window, iv_sell_zone, strikes=None, logscale=False):
     outdir_abs = os.path.realpath(outdir)
     # charts are BASENAMES only - never absolute paths, so embedding one in a
     # committed decision-log can't leak a local filesystem path. The dir is separate.
-    out["chart"] = _chart(safe_tkr, tkr_raw, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist,
-                          window, outdir_abs, strikes, logscale)
+    # DEFAULT (inline) mode writes ONLY the show_widget fragment and never imports
+    # matplotlib; --log additionally renders the static PNG/SVG + standalone HTML.
     html_name, widget_name = _chart_html(safe_tkr, tkr_raw, asof, dc, s200, s50, up, lo, rsi,
-                                          ml, sl, hist, window, outdir_abs, strikes, logscale)
-    out["chart_html"] = html_name
+                                          ml, sl, hist, window, outdir_abs, strikes, logscale,
+                                          write_standalone=log)
     out["chart_widget"] = widget_name
+    out["chart_html"] = html_name            # None in inline mode (no standalone written)
+    if log:
+        out["chart"] = _chart(safe_tkr, tkr_raw, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist,
+                              window, outdir_abs, strikes, logscale)
+    else:
+        out["chart"] = None                  # inline mode: no static PNG (matplotlib not imported)
     out["chart_dir"] = outdir_abs
     return out
 
@@ -475,7 +482,7 @@ const D = __DATA__;
 </script>"""
 
 
-def _chart_html(safe_tkr, tkr_label, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist, W, outdir, strikes, logscale):
+def _chart_html(safe_tkr, tkr_label, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist, W, outdir, strikes, logscale, write_standalone=True):
     """Write the interactive chart as BOTH a standalone .html (browser / file embed)
     and a .widget.html fragment (hand to show_widget for inline rendering). One
     config builds both, so the inline view can never drift from the saved file.
@@ -534,11 +541,14 @@ def _chart_html(safe_tkr, tkr_label, asof, dc, s200, s50, up, lo, rsi, ml, sl, h
     # same containment guard as _chart(): never write outside --outdir
     if os.path.commonpath([outdir, os.path.realpath(base)]) != outdir:
         raise InputError("refusing to write chart outside --outdir")
-    with open(base + ".html", "w", encoding="utf-8") as f:
-        f.write(standalone)
     with open(base + ".widget.html", "w", encoding="utf-8") as f:
         f.write(fragment)
-    return os.path.basename(base) + ".html", os.path.basename(base) + ".widget.html"
+    html_name = None
+    if write_standalone:
+        with open(base + ".html", "w", encoding="utf-8") as f:
+            f.write(standalone)
+        html_name = os.path.basename(base) + ".html"
+    return html_name, os.path.basename(base) + ".widget.html"
 
 
 def main():
@@ -552,6 +562,9 @@ def main():
                     help="one or more underlying prices; each draws a dashed labeled line on the price panel")
     ap.add_argument("--logscale", action="store_true",
                     help="log-scale the price panel (useful for parabolic moves)")
+    ap.add_argument("--log", "--full", dest="log", action="store_true",
+                    help="also render the static PNG/SVG + standalone HTML (matplotlib) for a logged "
+                         "decision entry; default is inline-only (fast: widget fragment only, no matplotlib)")
     a = ap.parse_args()
 
     try:
@@ -567,12 +580,14 @@ def main():
     try:
         if not isinstance(D, dict):
             raise InputError("input JSON must be an object")
-        out = run(D, a.outdir, a.window, a.iv_sell_zone, a.strike, a.logscale)
+        out = run(D, a.outdir, a.window, a.iv_sell_zone, a.strike, a.logscale, a.log)
     except InputError as e:
         print(json.dumps({"error": str(e)})); sys.exit(2)
     except OSError as e:    # makedirs/savefig: FileExists, NotADirectory, Permission, ...
         print(json.dumps({"error": f"filesystem error writing chart output: {e}"})); sys.exit(2)
 
+    if not a.log:
+        print("inline mode: static PNG/SVG/HTML skipped — pass --log to write them.", file=sys.stderr)
     print(json.dumps(out, indent=2))
 
 

@@ -71,10 +71,14 @@ DATA_AS_OF         = "prior session close"           # ignore weekend/stale 'las
 
 > **Override note (honest):** these values document `deepdive.py`'s built-in constants. Runtime CLI flags:
 > `--window` (→ CHART_WINDOW), `--iv-sell-zone` (→ IV_RANK_SELL_ZONE), `--strike <p> [<p> …]` (one or more
-> dashed price-panel lines — no constant), and `--logscale` (log-scale the price panel; use it for parabolic
-> names). IV fields passed as 0–1 fractions are **auto-scaled to percent with a warning** (so the sell-zone
-> gate can't silently fail). The rest are fixed in the engine; to change them, edit the constants at the top
-> of `deepdive.py`. Editing this block alone does nothing.
+> dashed price-panel lines — no constant), and `--logscale` (log-scale the price panel; for parabolic names).
+> **`--log` (canonical; `--full` is an alias) is the output switch:** by **default** the engine runs
+> **inline-only** — it computes the stack and writes just the `.widget.html` fragment, *never importing
+> matplotlib* (the fast path, ~2 s cheaper per run). Pass **`--log`** to ALSO render the static `.png`/`.svg`
+> + standalone `.html` — use it when you're going to **log a decision entry** (the log embeds the PNG). IV
+> fields passed as 0–1 fractions are **auto-scaled to percent with a warning** (so the sell-zone gate can't
+> silently fail). The rest are fixed in the engine; edit the constants at the top of `deepdive.py` to change
+> them. Editing this block alone does nothing.
 
 ---
 
@@ -89,16 +93,19 @@ DATA_AS_OF         = "prior session close"           # ignore weekend/stale 'las
    - **The connector returns IV-percentile and vols as FRACTIONS (0–1).** The engine now auto-scales 0–1 values
      to percent (e.g. `high_13w` 0.38 → `rank13: 38`) and **warns** when it does, so the sell-zone gate can't
      silently always-fail. Still prefer to pass percent and stay consistent across the fields.
-3. **Compute + chart** — write the pulled series to a temp JSON and run the engine:
-   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/chart-read/scripts/deepdive.py" --input <tmp>.json --outdir <ASSETS_DIR> --window <CHART_WINDOW> [--strike <p> [<p> …]] [--logscale]`
-   It returns the stack as JSON and writes `<asof>_<TICKER>_daily.(png|svg|html|widget.html)` (price + SMA(200/50) + Bollinger + last-price label + strikes / RSI / MACD):
-   - **PNG/SVG** — the static, date-stamped image to **embed in the decisions log / markdown** (the OUTPUT template links the `.png`).
-   - **HTML** — a self-contained **interactive** chart (Chart.js, index-hover tooltips, dark-mode aware) to **open in a browser**.
-   - **`.widget.html`** — a `show_widget`-ready fragment of the *same* chart, for inline rendering in chat (step 4).
+3. **Compute + chart** — write the pulled series to a temp JSON and run the engine. **Default = inline-only
+   (fast):** it computes the stack and writes just the `.widget.html` fragment for the inline render — no
+   matplotlib, no static files. Add **`--log`** only when you're going to log the read (it also writes the
+   PNG/SVG/HTML the log embeds).
+   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/chart-read/scripts/deepdive.py" --input <tmp>.json --outdir <ASSETS_DIR> --window <CHART_WINDOW> [--strike <p> [<p> …]] [--logscale] [--log]`
+   It always prints the stack as JSON (price + SMA(200/50) + Bollinger + last-price label + strikes / RSI / MACD); the `chart_*` fields report what was actually written. Outputs:
+   - **`.widget.html`** *(always)* — a `show_widget`-ready fragment, the source of the inline chart in chat (step 4). On a default run this is the **only** file written.
+   - **PNG/SVG** *(only with `--log`)* — the static, date-stamped image the OUTPUT template embeds in the decisions log. A default run does **not** produce it.
+   - **standalone `.html`** *(only with `--log`)* — a self-contained interactive chart to open in a browser; the log links it next to the PNG.
    - **`--strike`** — pass the strikes of the user's **actual short options on this ticker** (read them from the IBKR positions) so the chart shows where the real obligations sit. One or many. Prefer the **near-the-money** strikes that matter to the decision — a deep-OTM strike stretches the y-axis and squishes the price action.
    - **`--logscale`** — use for parabolic names (a ~3×+ range) so the early action isn't crushed flat.
    On bad/missing data it prints a one-line `{"error": ...}` and exits non-zero — read it and STOP, don't guess.
-   (First run in a fresh sandbox, if the libs are missing:
+   (First run in a fresh sandbox — only `--log` needs matplotlib:
    `python3 -m pip install "numpy>=1.23" "pandas>=1.5" "matplotlib>=3.6"`.)
 4. **Show it inline** — don't make the user open a file. Render the chart in the chat so they see it
    immediately (Cowork and Claude Code): pass the **contents of the engine's `<asof>_<TICKER>_daily.widget.html`**
@@ -108,6 +115,9 @@ DATA_AS_OF         = "prior session close"           # ignore weekend/stale 'las
 6. **Decide** — one verdict with trigger levels expressed as **underlying prices**. If options are in play, show
    **premium-adjusted basis** and hand the action to `leaps` / `covered-call`.
 7. **Log it** — append a dated entry to `DECISIONS_LOG` using the OUTPUT template, embedding the chart.
+   The entry embeds the `.png`, so the run **must have used `--log`**. A default (inline) run does NOT produce
+   the PNG — so before writing the entry, **re-run step 3 with `--log`** to render it. Never embed a chart the
+   run didn't write (no broken image links).
 
 ---
 

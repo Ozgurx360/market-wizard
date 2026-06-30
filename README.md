@@ -127,6 +127,10 @@ math) to `leaps` / `covered-call`. It never infers your thesis and it places no 
 - A small **CONFIG block** documents the indicator defaults; the chart engine (`scripts/deepdive.py`,
   numpy / pandas / matplotlib) validates its input and **never emits a raw traceback** — bad data returns a
   one-line `{"error": …}` and a non-zero exit.
+- **Inline-by-default (v0.3.0):** a normal run is **fast** — it writes only the interactive `.widget.html`
+  and renders the chart inline in chat, **never importing matplotlib**. Pass **`--log`** to additionally
+  write the static **PNG/SVG + standalone HTML** for a logged decision entry (the image the decisions log
+  embeds). `--full` is an alias for `--log`.
 
 Handoff: `chart-read` ends at the **read + chart + logged verdict + trigger levels** → `leaps` (long calls /
 PMCC / verticals) · `covered-call` (calls on shares). `csp` joins the chain once it ships.
