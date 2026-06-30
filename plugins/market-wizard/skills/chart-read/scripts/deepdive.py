@@ -4,9 +4,11 @@
 Generic and stateless. NO personal data lives here. Reads an OHLC(+IV) JSON on
 --input, computes the weekly-bias / daily-trigger indicator stack, flags
 divergence candidates, and renders a date-stamped 3-panel chart
-(price + 200/50-SMA + Bollinger | RSI | MACD). Prints a JSON summary to stdout.
+(price + 200/50-SMA + Bollinger | RSI | MACD) as a static PNG/SVG *and* a
+self-contained interactive Chart.js HTML. Prints a JSON summary to stdout.
 
-  python3 deepdive.py --input data.json --outdir ./assets [--window 90] [--iv-sell-zone 60]
+  python3 deepdive.py --input data.json --outdir ./assets [--window 90] \
+                      [--iv-sell-zone 60] [--strike 95]
 
 Input JSON (price series ordered oldest -> newest):
 {
@@ -204,7 +206,7 @@ def _safe_ticker(tkr):
     return safe or "TICKER"
 
 
-def run(D, outdir, window, iv_sell_zone):
+def run(D, outdir, window, iv_sell_zone, strike=None):
     tkr_raw = str(D.get("ticker", "TICKER"))
     safe_tkr = _safe_ticker(tkr_raw)
 
@@ -289,6 +291,8 @@ def run(D, outdir, window, iv_sell_zone):
     # committed decision-log can't leak a local filesystem path. The dir is separate.
     out["chart"] = _chart(safe_tkr, tkr_raw, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist,
                           window, outdir_abs)
+    out["chart_html"] = _chart_html(safe_tkr, tkr_raw, asof, dc, s200, s50, up, lo, rsi,
+                                    ml, sl, hist, window, outdir_abs, strike)
     out["chart_dir"] = outdir_abs
     return out
 
@@ -339,6 +343,171 @@ def _chart(safe_tkr, tkr_label, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist, 
     return os.path.basename(base) + ".png"
 
 
+def _html_escape(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+# Self-contained interactive chart. Chart.js v4 is pulled from a CDN (no build);
+# the series are injected at __DATA__ and the title at __TITLE__. Deliberately
+# uses no identifier containing personal data and no white page background, so it
+# reads on a light OR dark host. Three stacked panels share one category x-axis;
+# each y-axis is pinned to a fixed width so the panels line up vertically.
+_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; padding:14px 16px; background:transparent;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  h1 { font-size:15px; font-weight:600; margin:0 0 10px; color:#33373d; }
+  .panel { position:relative; width:100%; }
+  .panel.price { height:340px; }
+  .panel.rsi   { height:150px; }
+  .panel.macd  { height:168px; }
+  @media (prefers-color-scheme: dark) { h1 { color:#c9d1d9; } }
+</style>
+</head>
+<body>
+<h1>__TITLE__</h1>
+<div class="panel price"><canvas id="price"></canvas></div>
+<div class="panel rsi"><canvas id="rsi"></canvas></div>
+<div class="panel macd"><canvas id="macd"></canvas></div>
+<script>
+const D = __DATA__;
+(function () {
+  const dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const tickC = dark ? '#c9d1d9' : '#33373d';
+  const gridC = dark ? 'rgba(160,160,160,0.16)' : 'rgba(120,120,120,0.15)';
+  Chart.defaults.color = tickC;
+  Chart.defaults.font.size = 11;
+  const YW = 60;
+  const fixY = { afterFit(sc) { sc.width = YW; } };
+  const tip = {
+    mode: 'index', intersect: false,
+    callbacks: { label: (c) => c.dataset.label + ': ' + (c.parsed.y == null ? '-' : Number(c.parsed.y).toFixed(2)) }
+  };
+  const xTop = { grid: { color: gridC }, ticks: { display: false } };
+  const xBot = { grid: { color: gridC }, ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0 } };
+  const flat = (v) => D.labels.map(() => v);
+  const last = D.close.length - 1;
+  const ptR = D.close.map((_, i) => i === last ? 4.5 : 0);
+  const ptC = D.close.map((_, i) => i === last ? (dark ? '#7fb2f0' : '#1f5fb0') : 'rgba(0,0,0,0)');
+
+  const priceDs = [
+    { label: 'Boll up', data: D.bup, borderColor: 'rgba(57,135,229,0.45)', borderWidth: 0.8, pointRadius: 0, fill: '+1', backgroundColor: 'rgba(57,135,229,0.10)' },
+    { label: 'Boll lo', data: D.blo, borderColor: 'rgba(57,135,229,0.45)', borderWidth: 0.8, pointRadius: 0, fill: false },
+    { label: 'Close', data: D.close, borderColor: '#2f7ed8', borderWidth: 1.9, pointRadius: ptR, pointBackgroundColor: ptC, pointBorderColor: ptC, tension: 0 },
+    { label: '200-SMA', data: D.sma200, borderColor: '#c98500', borderWidth: 1.3, borderDash: [6, 3], pointRadius: 0 },
+    { label: '50-SMA', data: D.sma50, borderColor: '#9aa0a6', borderWidth: 1.1, borderDash: [2, 2], pointRadius: 0 }
+  ];
+  if (D.hlLabel) {
+    priceDs.push({ label: D.hlLabel, data: flat(D.hl), borderColor: '#e34948', borderWidth: 1.3, borderDash: [7, 4], pointRadius: 0, fill: false });
+  }
+  new Chart(document.getElementById('price'), {
+    type: 'line',
+    data: { labels: D.labels, datasets: priceDs },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: true, labels: { boxWidth: 12, usePointStyle: true } }, tooltip: tip },
+      scales: { x: xTop, y: Object.assign({ grid: { color: gridC } }, fixY) }
+    }
+  });
+
+  new Chart(document.getElementById('rsi'), {
+    type: 'line',
+    data: {
+      labels: D.labels, datasets: [
+        { label: '70', data: flat(70), borderColor: 'rgba(227,73,72,0.55)', borderWidth: 0.8, borderDash: [5, 4], pointRadius: 0 },
+        { label: '50', data: flat(50), borderColor: 'rgba(154,160,166,0.6)', borderWidth: 0.7, borderDash: [3, 3], pointRadius: 0 },
+        { label: '30', data: flat(30), borderColor: 'rgba(99,153,34,0.6)', borderWidth: 0.8, borderDash: [5, 4], pointRadius: 0 },
+        { label: 'RSI(14)', data: D.rsi, borderColor: '#6f5bd0', borderWidth: 1.6, pointRadius: 0 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false }, tooltip: Object.assign({}, tip, { filter: (i) => i.dataset.label === 'RSI(14)' }) },
+      scales: { x: xTop, y: Object.assign({ min: 0, max: 100, ticks: { stepSize: 20 }, grid: { color: gridC } }, fixY) }
+    }
+  });
+
+  const histC = D.hist.map((v) => v == null ? 'rgba(0,0,0,0)' : (v >= 0 ? 'rgba(99,153,34,0.6)' : 'rgba(227,73,72,0.6)'));
+  new Chart(document.getElementById('macd'), {
+    type: 'bar',
+    data: {
+      labels: D.labels, datasets: [
+        { type: 'bar', label: 'Hist', data: D.hist, backgroundColor: histC, borderWidth: 0, categoryPercentage: 1.0, barPercentage: 1.0 },
+        { type: 'line', label: 'MACD', data: D.macd, borderColor: '#2f7ed8', borderWidth: 1.3, pointRadius: 0 },
+        { type: 'line', label: 'Signal', data: D.signal, borderColor: '#c98500', borderWidth: 1.0, borderDash: [5, 3], pointRadius: 0 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: true, labels: { boxWidth: 12 } }, tooltip: tip },
+      scales: { x: xBot, y: Object.assign({ grid: { color: gridC } }, fixY) }
+    }
+  });
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def _chart_html(safe_tkr, tkr_label, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist, W, outdir, strike):
+    """Write a self-contained interactive Chart.js chart (price / RSI / MACD),
+    in addition to the PNG/SVG. Chart.js loads from a CDN; the windowed series
+    are embedded inline as JSON. Returns the BASENAME only (never an absolute
+    path), matching _chart()'s contract so a committed log can't leak a path."""
+    N = len(dc); W = max(1, min(W, N)); s = N - W
+    try:
+        import pandas as pd
+        x_full = pd.bdate_range(end=pd.Timestamp(asof) if asof else None, periods=N)
+        labels = [d.strftime("%Y-%m-%d") for d in x_full[s:]]
+    except Exception:
+        labels = [str(i) for i in range(s, N)]
+
+    def J(arr):
+        # window + JSON-safe: NaN/inf -> null so Chart.js renders a gap, not a crash
+        vals = []
+        for v in np.asarray(arr[s:], float):
+            vals.append(round(float(v), 4) if np.isfinite(v) else None)
+        return vals
+
+    hl = hl_label = None
+    if strike is not None and np.isfinite(strike):
+        hl = round(float(strike), 4)
+        hl_label = "Strike " + (str(int(hl)) if float(hl).is_integer() else str(hl))
+
+    title_date = asof if asof else "(date n/a)"
+    payload = {
+        "labels": labels, "close": J(dc), "sma200": J(s200), "sma50": J(s50),
+        "bup": J(up), "blo": J(lo), "rsi": J(rsi),
+        "macd": J(ml), "signal": J(sl), "hist": J(hist),
+        "hl": hl, "hlLabel": hl_label,
+    }
+    html_doc = (_HTML_TEMPLATE
+                .replace("__DATA__", json.dumps(payload))
+                .replace("__TITLE__", _html_escape(f"{tkr_label} as of {title_date}")))
+
+    outdir = os.path.abspath(outdir); os.makedirs(outdir, exist_ok=True)
+    base = os.path.join(outdir, f"{asof + '_' if asof else ''}{safe_tkr}_daily")
+    # same containment guard as _chart(): never write outside --outdir
+    if os.path.commonpath([outdir, os.path.realpath(base)]) != outdir:
+        raise InputError("refusing to write chart outside --outdir")
+    path = base + ".html"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html_doc)
+    return os.path.basename(path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True)
@@ -346,6 +515,8 @@ def main():
     ap.add_argument("--window", type=int, default=90)
     ap.add_argument("--iv-sell-zone", type=float, default=IV_RANK_SELL_ZONE,
                     help="13-wk IV-rank at/above which premium is 'rich' (default 60)")
+    ap.add_argument("--strike", type=float, default=None,
+                    help="optional underlying price; draws a dashed horizontal line on the HTML price panel")
     a = ap.parse_args()
 
     try:
@@ -361,7 +532,7 @@ def main():
     try:
         if not isinstance(D, dict):
             raise InputError("input JSON must be an object")
-        out = run(D, a.outdir, a.window, a.iv_sell_zone)
+        out = run(D, a.outdir, a.window, a.iv_sell_zone, a.strike)
     except InputError as e:
         print(json.dumps({"error": str(e)})); sys.exit(2)
     except OSError as e:    # makedirs/savefig: FileExists, NotADirectory, Permission, ...

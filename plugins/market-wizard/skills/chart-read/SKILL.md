@@ -62,14 +62,15 @@ CHART_WINDOW       = 90       # sessions shown on the daily chart
 
 # Output
 DECISIONS_LOG      = "<from CLAUDE.md, else ask>"   # e.g. a Trading-Decisions.md in the working folder
-ASSETS_DIR         = "./assets"                      # date-stamped charts land here
+ASSETS_DIR         = "./assets"                      # date-stamped charts land here (.png + .svg + .html)
 DATA_AS_OF         = "prior session close"           # ignore weekend/stale 'last' snapshots
 ```
 
-> **Override note (honest):** these values document `deepdive.py`'s built-in constants. Only two are
-> overridable at runtime, via CLI flags: `CHART_WINDOW` → `--window`, and `IV_RANK_SELL_ZONE` →
-> `--iv-sell-zone`. The rest are fixed in the engine; to change them, edit the constants at the top of
-> `deepdive.py`. Editing this block alone does nothing.
+> **Override note (honest):** these values document `deepdive.py`'s built-in constants. Two are
+> overridable at runtime via CLI flags — `CHART_WINDOW` → `--window`, `IV_RANK_SELL_ZONE` →
+> `--iv-sell-zone` — plus `--strike <price>` (optional, no constant) which draws a dashed line on the
+> chart's price panel at that strike. The rest are fixed in the engine; to change them, edit the
+> constants at the top of `deepdive.py`. Editing this block alone does nothing.
 
 ---
 
@@ -84,8 +85,11 @@ DATA_AS_OF         = "prior session close"           # ignore weekend/stale 'las
      `rank13/rank26/rank52`, `annual_pct`, `realized_pct` (e.g. `implied-volatility-percentile.high_13w` = 0.38
      → `rank13: 38`). Skip this and the sell-zone gate (`rank13 >= IV_RANK_SELL_ZONE`) is silently always-false.
 3. **Compute + chart** — write the pulled series to a temp JSON and run the engine:
-   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/chart-read/scripts/deepdive.py" --input <tmp>.json --outdir <ASSETS_DIR> --window <CHART_WINDOW>`
-   It returns the stack as JSON and writes `<asof>_<TICKER>_daily.(png|svg)` (price+SMA+Bollinger / RSI / MACD).
+   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/chart-read/scripts/deepdive.py" --input <tmp>.json --outdir <ASSETS_DIR> --window <CHART_WINDOW> [--strike <price>]`
+   It returns the stack as JSON and writes `<asof>_<TICKER>_daily.(png|svg|html)` (price+SMA+Bollinger / RSI / MACD). Two views of the same data:
+   - **PNG/SVG** — the static, date-stamped image to **embed in the decisions log / markdown** (the OUTPUT template links the `.png`).
+   - **HTML** — a self-contained **interactive** chart (Chart.js via CDN, index-hover tooltips, dark-mode aware) to **open in a browser** for reading together — e.g. render it inline in Cowork. The PNG is for the log; the HTML is for live reading.
+   - `--strike <price>` (optional) draws a dashed line on the price panel — handy when eyeing a specific call/put strike.
    On bad/missing data it prints a one-line `{"error": ...}` and exits non-zero — read it and STOP, don't guess.
    (First run in a fresh sandbox, if the libs are missing:
    `python3 -m pip install "numpy>=1.23" "pandas>=1.5" "matplotlib>=3.6"`.)
