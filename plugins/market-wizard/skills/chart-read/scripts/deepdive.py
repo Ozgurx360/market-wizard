@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+"""market-wizard:chart-read - indicator + chart engine.
+
+Generic and stateless. NO personal data lives here. Reads an OHLC(+IV) JSON on
+--input, computes the weekly-bias / daily-trigger indicator stack, flags
+divergence candidates, and renders a date-stamped 3-panel chart
+(price + 200/50-SMA + Bollinger | RSI | MACD). Prints a JSON summary to stdout.
+
+  python3 deepdive.py --input data.json --outdir ./assets [--window 90] [--iv-sell-zone 60]
+
+Input JSON (price series ordered oldest -> newest):
+{
+  "ticker": "XYZ",
+  "asof":   "2026-06-26",
+  "daily":  {"close": [...], "high": [...], "low": [...]},
+  "weekly": {"close": [...], "high": [...], "low": [...]},          # optional but recommended
+  "iv":     {"annual_pct": 80, "rank13": 5, "rank26": 6,
+             "rank52": 20, "realized_pct": 104}                     # optional
+}
+
+Robustness contract:
+  - Required: daily.close (non-empty list of finite numbers). Anything else is
+    reported as a one-line JSON {"error": ...} on stdout with a non-zero exit -
+    never a raw traceback.
+  - Optional fields (weekly, iv) degrade gracefully whether absent, empty, or
+    the wrong type. iv.rank13 is coerced from str/number; non-numeric -> sell_zone
+    skipped with a warning rather than a crash.
+  - Indicators that need more bars than supplied are emitted as null, never as a
+    confident-but-meaningless number (e.g. MACD needs >= slow+signal bars).
+  - ticker / asof are untrusted input: ticker is sanitized for the filename and
+    asof must be YYYY-MM-DD, so neither can traverse out of --outdir.
+
+Requires: numpy (always), matplotlib + pandas (for the chart; degrades gracefully).
+"""
+import argparse, json, os, re, sys
+import numpy as np
+
+# --- fixed indicator defaults (the SKILL.md CONFIG block documents these) -----
+RSI_LEN          = 14
+MACD_FAST        = 12
+MACD_SLOW        = 26
+MACD_SIGNAL      = 9
+SMA_DAILY_REGIME = 200
+SMA_DAILY_FAST   = 50
+SMA_WEEKLY       = 40
+BOLL_LEN         = 20
+BOLL_K           = 2
+SWING_K          = 3
+IV_RANK_SELL_ZONE = 60          # CLI-overridable via --iv-sell-zone
+MACD_MIN_BARS    = MACD_SLOW + MACD_SIGNAL   # below this, MACD is warm-up garbage
+MAX_BARS         = 6000         # ~24 yr daily / ~115 yr weekly; caps the pure-python loops
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+class InputError(Exception):
+    """Raised for bad/missing input; turned into a clean JSON error in main()."""
+
+
+def ema(x, n):
+    if len(x) == 0:
+        return np.array([])
+    k = 2 / (n + 1); o = [x[0]]
+    for v in x[1:]:
+        o.append(v * k + o[-1] * (1 - k))
+    return np.array(o)
+
+
+def _rsi_point(ag, al):
+    # No losses -> 100, unless there are also no gains (flat/halted): conventionally 50.
+    if al == 0:
+        return 50.0 if ag == 0 else 100.0
+    return 100 - 100 / (1 + ag / al)
+
+
+def rsi_series(x, n=RSI_LEN):
+    x = np.asarray(x, float); d = np.diff(x)
+    g = np.where(d > 0, d, 0.0); l = np.where(d < 0, -d, 0.0)
+    o = np.full(len(x), np.nan)
+    if len(x) > n:
+        ag = g[:n].mean(); al = l[:n].mean()
+        o[n] = _rsi_point(ag, al)
+        for i in range(n + 1, len(x)):
+            ag = (ag * (n - 1) + g[i - 1]) / n
+            al = (al * (n - 1) + l[i - 1]) / n
+            o[i] = _rsi_point(ag, al)
+    return o
+
+
+def sma_series(x, n):
+    x = np.asarray(x, float); o = np.full(len(x), np.nan)
+    for i in range(n - 1, len(x)):
+        o[i] = x[i - n + 1:i + 1].mean()
+    return o
+
+
+def boll(x, n=BOLL_LEN, k=BOLL_K):
+    # population std (ddof=0), matching StockCharts / most charting platforms
+    x = np.asarray(x, float)
+    up = np.full(len(x), np.nan); mid = np.full(len(x), np.nan); lo = np.full(len(x), np.nan)
+    for i in range(n - 1, len(x)):
+        seg = x[i - n + 1:i + 1]; m = seg.mean(); s = seg.std()
+        up[i] = m + k * s; mid[i] = m; lo[i] = m - k * s
+    return up, mid, lo
+
+
+def macd(x, f=MACD_FAST, s=MACD_SLOW, sig=MACD_SIGNAL):
+    ml = ema(x, f) - ema(x, s); sl = ema(ml, sig)
+    return ml, sl, ml - sl
+
+
+def swings(series, k=SWING_K, kind="low"):
+    """Symmetric strict k-bar fractal: an extremum strictly beyond BOTH its k
+    left and k right neighbours. NaN windows (warm-up) are skipped. Note the
+    last k bars can never be a confirmed swing - the freshest pivot lags by k."""
+    s = np.asarray(series, float); idx = []
+    for i in range(k, len(s) - k):
+        left = s[i - k:i]; right = s[i + 1:i + k + 1]
+        if not (np.isfinite(s[i]) and np.all(np.isfinite(left)) and np.all(np.isfinite(right))):
+            continue
+        if kind == "low" and s[i] < left.min() and s[i] < right.min():
+            idx.append(i)
+        if kind == "high" and s[i] > left.max() and s[i] > right.max():
+            idx.append(i)
+    return idx
+
+
+def divergence(close, rsi):
+    """Candidate regular divergence on the last two price swing lows/highs,
+    read against RSI at those same bars. ALWAYS a candidate to verify on the
+    chart - never authoritative (treat as a tilt). Only the last two swings are
+    compared; earlier divergences are not surfaced. RSI is sampled at the PRICE
+    swing (not RSI's own swing) - a deliberate simplification. Bars whose RSI is
+    still in the warm-up (NaN) region are skipped, so no 'nan' leaks into output."""
+    out = {"bullish": None, "bearish": None}
+    rsi = np.asarray(rsi, float)
+
+    lows = [i for i in swings(close, SWING_K, "low") if np.isfinite(rsi[i])]
+    if len(lows) >= 2:
+        a, b = lows[-2], lows[-1]
+        if close[b] < close[a] and rsi[b] > rsi[a]:
+            out["bullish"] = (f"CANDIDATE regular-bull: price LL {close[a]:.2f}->{close[b]:.2f}, "
+                              f"RSI HL {rsi[a]:.1f}->{rsi[b]:.1f} (verify on chart)")
+        elif close[b] < close[a]:
+            out["bullish"] = (f"none - confirmation (price LL, RSI also LL "
+                              f"{rsi[a]:.1f}->{rsi[b]:.1f})")
+
+    highs = [i for i in swings(close, SWING_K, "high") if np.isfinite(rsi[i])]
+    if len(highs) >= 2:
+        a, b = highs[-2], highs[-1]
+        if close[b] > close[a] and rsi[b] < rsi[a]:
+            out["bearish"] = (f"CANDIDATE regular-bear: price HH {close[a]:.2f}->{close[b]:.2f}, "
+                              f"RSI LH {rsi[a]:.1f}->{rsi[b]:.1f} (verify on chart)")
+        elif close[b] > close[a]:
+            out["bearish"] = (f"none - confirmation (price HH, RSI also HH "
+                              f"{rsi[a]:.1f}->{rsi[b]:.1f})")
+    return out
+
+
+def _last(v):
+    return None if (len(v) == 0 or not np.isfinite(v[-1])) else round(float(v[-1]), 2)
+
+
+def _regime(price, sma_last):
+    """Three-way on the displayed (rounded) values: ABOVE / BELOW / AT."""
+    if sma_last is None:
+        return None
+    p = round(float(price), 2)
+    return "AT" if p == sma_last else ("ABOVE" if p > sma_last else "BELOW")
+
+
+def _coerce_1d(seq, name):
+    """Coerce a sequence to a finite 1-D float array or raise InputError. Catches
+    non-numeric values (str prices) and ragged/nested lists before they reach numpy
+    indexing or matplotlib (which would otherwise surface as a raw traceback)."""
+    try:
+        arr = np.asarray(seq, dtype=float)
+    except (ValueError, TypeError):
+        raise InputError(f"{name} contains non-numeric values")
+    if arr.ndim != 1:
+        raise InputError(f"{name} must be a flat list of numbers, not nested/ragged")
+    if not np.all(np.isfinite(arr)):
+        raise InputError(f"{name} contains non-numeric/NaN values - refusing to "
+                         "emit silently-wrong indicators")
+    return arr
+
+
+def _closes(block, name):
+    """Optional close series -> (finite 1-D array | None, warning | None). NEVER
+    raises: a present-but-malformed optional block degrades to absent + a warning."""
+    if not isinstance(block, dict):
+        return None, None
+    c = block.get("close")
+    if not isinstance(c, (list, tuple)) or len(c) == 0:
+        return None, None
+    try:
+        return _coerce_1d(c, f"{name}.close"), None
+    except InputError as e:
+        return None, f"{e}; {name} ignored"
+
+
+def _safe_ticker(tkr):
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(tkr)).strip("._")[:32]
+    return safe or "TICKER"
+
+
+def run(D, outdir, window, iv_sell_zone):
+    tkr_raw = str(D.get("ticker", "TICKER"))
+    safe_tkr = _safe_ticker(tkr_raw)
+
+    asof = str(D.get("asof", "") or "")
+    warnings = []
+    if asof and not _DATE_RE.match(asof):
+        warnings.append(f"asof '{asof}' is not YYYY-MM-DD; dropped from filename/title")
+        asof = ""
+
+    # --- required: daily.close --------------------------------------------------
+    daily = D.get("daily")
+    if not isinstance(daily, dict) or not isinstance(daily.get("close"), (list, tuple)) \
+            or len(daily.get("close")) == 0:
+        raise InputError("missing or empty required field daily.close")
+    dc = _coerce_1d(daily["close"], "daily.close")
+    if len(dc) > MAX_BARS:
+        warnings.append(f"daily series {len(dc)} bars exceeds MAX_BARS {MAX_BARS}; "
+                        f"truncated to most recent {MAX_BARS}")
+        dc = dc[-MAX_BARS:]
+
+    s200 = sma_series(dc, SMA_DAILY_REGIME); s50 = sma_series(dc, SMA_DAILY_FAST)
+    up, mid, lo = boll(dc); rsi = rsi_series(dc); ml, sl, hist = macd(dc)
+
+    pctB = None
+    if np.isfinite(up[-1]) and up[-1] != lo[-1]:
+        pctB = round(float((dc[-1] - lo[-1]) / (up[-1] - lo[-1])), 2)
+
+    # MACD is meaningless until we have >= slow+signal bars; null it otherwise.
+    if len(dc) >= MACD_MIN_BARS:
+        macd_last, sig_last, hist_last = _last(ml), _last(sl), _last(hist)
+    else:
+        macd_last = sig_last = hist_last = None
+        warnings.append(f"daily series < {MACD_MIN_BARS} bars; MACD suppressed (warm-up)")
+
+    sma200_last = _last(s200)
+    out = {"ticker": tkr_raw, "asof": asof,
+           "daily": {"price": round(float(dc[-1]), 2), "sma200": sma200_last, "sma50": _last(s50),
+                     "rsi": _last(rsi), "macd": macd_last, "signal": sig_last, "hist": hist_last,
+                     "boll_up": _last(up), "boll_mid": _last(mid), "boll_lo": _last(lo), "pctB": pctB,
+                     "regime_vs_200": _regime(dc[-1], sma200_last)},
+           "divergence": divergence(dc, rsi),
+           "iv": {}}
+
+    # --- optional: weekly -------------------------------------------------------
+    wc, wwarn = _closes(D.get("weekly"), "weekly")
+    if wwarn:
+        warnings.append(wwarn)
+    if wc is not None and len(wc) > MAX_BARS:
+        warnings.append(f"weekly series truncated to most recent {MAX_BARS}")
+        wc = wc[-MAX_BARS:]
+    if wc is not None:
+        w40 = sma_series(wc, SMA_WEEKLY); wr = rsi_series(wc); wml, wsl, wh = macd(wc)
+        w40_last = _last(w40)
+        if len(wc) >= MACD_MIN_BARS:
+            wmacd, wsig, whist = _last(wml), _last(wsl), _last(wh)
+        else:
+            wmacd = wsig = whist = None
+        out["weekly"] = {"price": round(float(wc[-1]), 2), "sma40": w40_last, "rsi": _last(wr),
+                         "macd": wmacd, "signal": wsig, "hist": whist,
+                         "bias_vs_40w": _regime(wc[-1], w40_last)}
+
+    # --- optional: iv -----------------------------------------------------------
+    iv_in = D.get("iv")
+    if isinstance(iv_in, dict):
+        out["iv"] = dict(iv_in)
+        if "rank13" in out["iv"]:
+            try:
+                r = float(out["iv"]["rank13"])
+            except (TypeError, ValueError):
+                r = None
+            out["iv"]["note"] = "IV-RANK (relative), not absolute IV, decides rich-vs-cheap"
+            if r is None:
+                out["iv"]["warning"] = "rank13 not numeric; sell_zone not computed"
+            else:
+                out["iv"]["sell_zone"] = r >= iv_sell_zone
+
+    if warnings:
+        out["warnings"] = warnings
+
+    outdir_abs = os.path.abspath(outdir)
+    # chart is the BASENAME only - never an absolute path, so embedding it in a
+    # committed decision-log can't leak a local filesystem path. The dir is separate.
+    out["chart"] = _chart(safe_tkr, tkr_raw, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist,
+                          window, outdir_abs)
+    out["chart_dir"] = outdir_abs
+    return out
+
+
+def _chart(safe_tkr, tkr_label, asof, dc, s200, s50, up, lo, rsi, ml, sl, hist, W, outdir):
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+    try:
+        import pandas as pd
+        x_full = pd.bdate_range(end=pd.Timestamp(asof) if asof else None, periods=len(dc))
+    except Exception:
+        x_full = np.arange(len(dc))
+    N = len(dc); W = max(1, min(W, N)); s = N - W; x = x_full[s:]
+    title_date = asof if asof else "(date n/a)"
+    fig = plt.figure(figsize=(11, 8)); gs = GridSpec(3, 1, height_ratios=[3, 1, 1], hspace=0.12)
+    a1 = fig.add_subplot(gs[0]); a2 = fig.add_subplot(gs[1], sharex=a1); a3 = fig.add_subplot(gs[2], sharex=a1)
+    a1.plot(x, dc[s:], color="#185fa5", lw=1.8, label="Close")
+    if not np.all(np.isnan(s200[s:])):
+        a1.plot(x, s200[s:], color="#c98500", lw=1.3, ls="--", label="200-SMA")
+    a1.plot(x, s50[s:], color="#888780", lw=1.0, ls=":", label="50-SMA")
+    a1.plot(x, up[s:], color="#3987e5", lw=0.7, alpha=0.5)
+    a1.plot(x, lo[s:], color="#3987e5", lw=0.7, alpha=0.5)
+    a1.fill_between(x, lo[s:], up[s:], color="#3987e5", alpha=0.06)
+    a1.set_title(f"{tkr_label} - daily - as of {title_date}", fontsize=12, loc="left", weight="bold")
+    a1.legend(loc="upper left", fontsize=8, frameon=False); a1.grid(alpha=0.15)
+    a2.plot(x, rsi[s:], color="#4a3aa7", lw=1.4)
+    for y, c in [(70, "#e34948"), (50, "#888780"), (30, "#639922")]:
+        a2.axhline(y, color=c, lw=0.8, ls="--", alpha=0.5)
+    a2.set_ylim(10, 90); a2.set_ylabel("RSI(14)", fontsize=8); a2.grid(alpha=0.15)
+    cols = ["#639922" if h >= 0 else "#e34948" for h in hist[s:]]
+    a3.bar(x, hist[s:], color=cols, width=1.0, alpha=0.6)
+    a3.plot(x, ml[s:], color="#185fa5", lw=1.1)
+    a3.plot(x, sl[s:], color="#c98500", lw=1.0, ls="--")
+    a3.axhline(0, color="#888780", lw=0.6); a3.set_ylabel("MACD", fontsize=8); a3.grid(alpha=0.15)
+    plt.setp(a1.get_xticklabels(), visible=False); plt.setp(a2.get_xticklabels(), visible=False)
+    a3.tick_params(labelsize=8)
+
+    outdir = os.path.abspath(outdir)
+    os.makedirs(outdir, exist_ok=True)
+    base = os.path.join(outdir, f"{asof + '_' if asof else ''}{safe_tkr}_daily")
+    # defense in depth: the filename must stay inside outdir
+    if os.path.commonpath([outdir, os.path.realpath(base)]) != outdir:
+        plt.close(fig)
+        raise InputError("refusing to write chart outside --outdir")
+    fig.savefig(base + ".png", dpi=120, bbox_inches="tight")
+    fig.savefig(base + ".svg", bbox_inches="tight"); plt.close(fig)
+    return os.path.basename(base) + ".png"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--outdir", default="./assets")
+    ap.add_argument("--window", type=int, default=90)
+    ap.add_argument("--iv-sell-zone", type=float, default=IV_RANK_SELL_ZONE,
+                    help="13-wk IV-rank at/above which premium is 'rich' (default 60)")
+    a = ap.parse_args()
+
+    try:
+        with open(a.input, encoding="utf-8-sig") as f:   # -sig tolerates a UTF-8 BOM
+            D = json.load(f)
+    except FileNotFoundError:
+        print(json.dumps({"error": f"input file not found: {a.input}"})); sys.exit(2)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        print(json.dumps({"error": f"invalid input file {a.input}: {e}"})); sys.exit(2)
+    except OSError as e:
+        print(json.dumps({"error": f"cannot read {a.input}: {e}"})); sys.exit(2)
+
+    try:
+        if not isinstance(D, dict):
+            raise InputError("input JSON must be an object")
+        out = run(D, a.outdir, a.window, a.iv_sell_zone)
+    except InputError as e:
+        print(json.dumps({"error": str(e)})); sys.exit(2)
+    except OSError as e:    # makedirs/savefig: FileExists, NotADirectory, Permission, ...
+        print(json.dumps({"error": f"filesystem error writing chart output: {e}"})); sys.exit(2)
+
+    print(json.dumps(out, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -6,6 +6,7 @@ A **decision aid** — not an autotrader, not financial advice.
 ## Skills
 - **`market-wizard:leaps`** — full-lifecycle long-call LEAPS (live now)
 - **`market-wizard:covered-call`** — full-lifecycle covered calls on shares you own (live now)
+- **`market-wizard:chart-read`** — TA / charting read (RSI · MACD · SMA · Bollinger + date-stamped chart) that *feeds* `leaps` & `covered-call` (live now)
 - _planned:_ `market-wizard:csp` (cash-secured puts)
 
 ---
@@ -106,6 +107,32 @@ Like `leaps`, every threshold — delta bands per intent, profit-take %, DTE win
 
 ---
 
+## The read — `chart-read`
+
+The **technical-analysis layer** that *feeds* the options skills rather than duplicating them. Turns one
+ticker into a disciplined, reproducible read: the weekly-bias / daily-trigger indicator stack
+(**RSI · MACD · 200/50-SMA · Bollinger**), a divergence-candidate flag, an **IV-rank** check (relative, not
+absolute IV), a **date-stamped Price/RSI/MACD chart**, and a dated decision entry with explicit trigger
+levels appended to your decisions log.
+
+**Core idea.** Regime and momentum are *facts off the chart*; conviction is *yours*. `chart-read` produces
+the chart-and-regime read — weekly sets **bias** (price vs the 40-wk line), daily times the **trigger**
+(price vs the 200-SMA) — then hands the option itself (which strike, when to roll, the annualized-return
+math) to `leaps` / `covered-call`. It never infers your thesis and it places no orders.
+
+- **Read-only.** Pulls quotes / history, computes the stack, renders the chart — **no orders**, ever.
+- **IV-rank, not absolute IV** decides whether premium is rich enough to sell (≥ 60 on the 13-wk rank).
+- **Divergence is a candidate, not a trade** — gated behind confluence (location · divergence · confirmation
+  · timeframe-aligned) and confirmed on the chart; it states the failure modes.
+- A small **CONFIG block** documents the indicator defaults; the chart engine (`scripts/deepdive.py`,
+  numpy / pandas / matplotlib) validates its input and **never emits a raw traceback** — bad data returns a
+  one-line `{"error": …}` and a non-zero exit.
+
+Handoff: `chart-read` ends at the **read + chart + logged verdict + trigger levels** → `leaps` (long calls /
+PMCC / verticals) · `covered-call` (calls on shares). `csp` joins the chain once it ships.
+
+---
+
 ## Install
 ```
 /plugin marketplace add Ozgurx360/market-wizard
@@ -116,6 +143,9 @@ TICKER,"* *"should I roll X,"* *"build a debit spread on Y,"* *"trim/close this 
 
 For `covered-call` — *"review my covered calls,"* *"write a covered call on TICKER,"* *"how much premium have I
 collected on TICKER,"* *"should I roll my short call,"* *"reduce my cost basis by selling calls."*
+
+For `chart-read` — *"chart-read TICKER,"* *"technical / regime read on TICKER before I write a call,"* *"is
+TICKER's IV-rank rich enough to sell premium,"* *"where's my entry trigger / invalidation on TICKER."*
 
 ## Update (after a push)
 ```
@@ -134,6 +164,7 @@ plugins/market-wizard/
   .claude-plugin/plugin.json             plugin manifest
   skills/leaps/SKILL.md                  the LEAPS skill
   skills/covered-call/                   covered-call skill (SKILL.md + portfolio-scan workflow)
+  skills/chart-read/                     TA read + chart engine (SKILL.md + scripts/deepdive.py)
 ```
 
 ## Disclaimer

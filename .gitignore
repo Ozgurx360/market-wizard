@@ -1,0 +1,6 @@
+# generated charts (encode real ticker/position data — never commit)
+assets/
+*.png
+*.svg
+__pycache__/
+*.pyc
